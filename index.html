@@ -303,27 +303,50 @@ let weekPillOffset=0;
 let isAdmin=false;
 const ADMIN_PIN='4321';
 
+// ── Persistencia en servidor (Netlify Blobs via /api/data) ──────────────────
+// El tema (dark/light) se sigue guardando en localStorage: es preferencia local
+// y no tiene sentido sincronizarla entre dispositivos.
+
+let _saveTimer=null;
 function saveData(){
-  try{
-    localStorage.setItem('scb26_e',JSON.stringify(employees));
-    localStorage.setItem('scb26_s',JSON.stringify(shifts));
-    localStorage.setItem('scb26_id',String(nextId));
-    localStorage.setItem('scb26_th',document.documentElement.getAttribute('data-theme'));
-  }catch(e){}
+  // El tema va siempre a localStorage (es local, no del servidor)
+  try{localStorage.setItem('scb26_th',document.documentElement.getAttribute('data-theme'));}catch(_){}
+  // Debounce de 600 ms para no saturar el servidor con cada píxel arrastrado
+  clearTimeout(_saveTimer);
+  _saveTimer=setTimeout(()=>_persistToServer(),600);
 }
-function loadData(){
+async function _persistToServer(){
   try{
-    const e=localStorage.getItem('scb26_e');
-    const s=localStorage.getItem('scb26_s');
-    const id=localStorage.getItem('scb26_id');
+    const res=await fetch('/api/data',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({employees,shifts,nextId}),
+    });
+    if(!res.ok)console.warn('saveData: respuesta no-OK',res.status);
+  }catch(err){
+    console.error('saveData: error de red',err);
+  }
+}
+async function loadData(){
+  // El tema lo cargamos de localStorage (preferencia local del dispositivo)
+  try{
     const th=localStorage.getItem('scb26_th');
-    if(e)employees=JSON.parse(e);
-    if(s)shifts=JSON.parse(s);
-    if(id)nextId=parseInt(id)||nextId;
     if(th)document.documentElement.setAttribute('data-theme',th);
-  }catch(e){}
+  }catch(_){}
+  // El resto de datos vienen del servidor
+  try{
+    const res=await fetch('/api/data');
+    if(!res.ok)throw new Error('HTTP '+res.status);
+    const data=await res.json();
+    if(data.employees)employees=data.employees;
+    if(data.shifts)shifts=data.shifts;
+    if(data.nextId)nextId=parseInt(data.nextId)||nextId;
+  }catch(err){
+    console.error('loadData: error cargando desde servidor, usando datos locales',err);
+  }
 }
 
+// Datos semilla (se usan solo si el servidor devuelve un estado vacío)
 employees=[
   {id:1,name:'Ana Martínez',role:'Camarera',contract:'40h'},
   {id:2,name:'Carlos López',role:'Barista',contract:'40h'},
@@ -335,7 +358,6 @@ employees=[
   {id:8,name:'Rubén Torres',role:'Ayudante',contract:'20h'},
 ];
 shifts={};nextId=9;
-loadData();
 
 function hToX(h){return(h-START_H)*SLOT_PX;}
 function xToH(x){return x/SLOT_PX+START_H;}
@@ -889,11 +911,15 @@ function exportCSV(){
   a.click();URL.revokeObjectURL(url);toast('CSV exportado');
 }
 
+// ── Arranque ─────────────────────────────────────────────────────────────────
 weekPillOffset=Math.max(0,activeWeekIdx-5);
-renderWeekPills();
-renderDayBar();
-renderTimeline();
-updateAdminUI();
+(async()=>{
+  await loadData();
+  renderWeekPills();
+  renderDayBar();
+  renderTimeline();
+  updateAdminUI();
+})();
 </script>
 </body>
 </html>
