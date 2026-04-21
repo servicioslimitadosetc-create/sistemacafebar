@@ -240,7 +240,7 @@ textarea{resize:vertical;min-height:80px;line-height:1.6}
 <div class="toast" id="toast"></div>
 
 <script>
-const START_H=9,END_H=25,TOTAL_H=END_H-START_H;
+const START_H=8,END_H=25,TOTAL_H=END_H-START_H;
 const SLOT_PX=62,TOTAL_PX=TOTAL_H*SLOT_PX;
 const ROW_H=86,HDR_H=42,LABEL_W=136,SNAP=0.25;
 const DAYS=['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
@@ -268,6 +268,7 @@ const COLORS2=[
   {bg:'#f09595',col:'#501313',dot:'#a32d2d'},
 ];
 const CONTRACTS=[
+  {id:'10h',label:'10h',hours:10,bg:'#eeedfe',col:'#3c3489'},
   {id:'20h',label:'20h',hours:20,bg:'#dceefb',col:'#0c447c'},
   {id:'30h',label:'30h',hours:30,bg:'#d4f0e4',col:'#085041'},
   {id:'40h',label:'40h',hours:40,bg:'#dcefd0',col:'#27500a'},
@@ -854,11 +855,16 @@ function renderEmps(){
     return`<div class="ecard">
       <div class="ecard-head">
         <div class="eavatar" style="background:${c.bg};color:${c.col}">${init}</div>
-        <div><div style="font-size:13px;font-weight:500">${emp.name}</div><div style="font-size:10px;color:var(--txt2)">${emp.role}</div></div>
+        <div>
+          <div style="font-size:13px;font-weight:500">${emp.name}</div>
+          <div style="font-size:10px;color:var(--txt2)">${emp.role}${emp.empId?` · <span style="font-family:monospace;font-size:9px">${emp.empId}</span>`:''}</div>
+        </div>
       </div>
       <div class="ecard-info">
         <span style="background:${ct.bg};color:${ct.col};padding:1px 7px;border-radius:8px;font-size:9px;font-weight:600;display:inline-block">${ct.label} contrato</span>
-        <div style="margin-top:5px">Esta semana: ${s.total}h en ${s.days} días${s.extra>0?` · <strong style="color:#a32d2d">+${s.extra}h extra</strong>`:''}</div>
+        ${emp.email?`<div style="margin-top:5px;font-size:10px;color:var(--txt2)">✉ ${emp.email}</div>`:''}
+        ${emp.phone?`<div style="font-size:10px;color:var(--txt2)">☎ ${emp.phone}</div>`:''}
+        <div style="margin-top:4px">Esta semana: ${s.total}h en ${s.days} días${s.extra>0?` · <strong style="color:#a32d2d">+${s.extra}h extra</strong>`:''}</div>
         ${ys.totalExtra>0?`<div style="margin-top:2px;color:#a32d2d;font-weight:500">Acumulado año: +${ys.totalExtra}h (${ys.weeksWorked} sem.)</div>`:''}
       </div>
       <div class="ecard-acts" ${isAdmin?'':'style="display:none"'}>
@@ -875,6 +881,9 @@ function showAddEmpModal(){
     <h3>Nuevo empleado</h3>
     <label>Nombre completo</label><input type="text" id="e-name" placeholder="Nombre Apellido" onkeydown="if(event.key==='Enter')addEmp()">
     <label>Puesto</label><input type="text" id="e-role" placeholder="Camarero/a, Barista..." onkeydown="if(event.key==='Enter')addEmp()">
+    <label>ID empleado</label><input type="text" id="e-empid" placeholder="EMP-001">
+    <label>Correo electrónico</label><input type="email" id="e-email" placeholder="nombre@correo.com">
+    <label>Número móvil</label><input type="tel" id="e-phone" placeholder="+34 600 000 000">
     <label>Contrato</label>
     <div class="contract-sel">${CONTRACTS.map(ct=>`<button class="cs-o${ct.id==='40h'?' sel':''}" style="background:${ct.id==='40h'?ct.bg:'none'};color:${ct.id==='40h'?ct.col:'var(--txt)'}" onclick="selCt(this,'${ct.id}')">${ct.label}</button>`).join('')}</div>
     <input type="hidden" id="e-ct" value="40h">
@@ -890,8 +899,11 @@ function editEmp(id){
   const emp=employees.find(e=>e.id===id);if(!emp)return;
   openModal(`
     <h3>Editar empleado</h3>
-    <label>Nombre</label><input type="text" id="e-name" value="${emp.name}" onkeydown="if(event.key==='Enter')updEmp(${id})">
-    <label>Puesto</label><input type="text" id="e-role" value="${emp.role}" onkeydown="if(event.key==='Enter')updEmp(${id})">
+    <label>Nombre</label><input type="text" id="e-name" value="${emp.name||''}" onkeydown="if(event.key==='Enter')updEmp(${id})">
+    <label>Puesto</label><input type="text" id="e-role" value="${emp.role||''}" onkeydown="if(event.key==='Enter')updEmp(${id})">
+    <label>ID empleado</label><input type="text" id="e-empid" value="${emp.empId||''}" placeholder="EMP-001">
+    <label>Correo electrónico</label><input type="email" id="e-email" value="${emp.email||''}" placeholder="nombre@correo.com">
+    <label>Número móvil</label><input type="tel" id="e-phone" value="${emp.phone||''}" placeholder="+34 600 000 000">
     <label>Contrato</label>
     <div class="contract-sel">${CONTRACTS.map(ct=>`<button class="cs-o${ct.id===emp.contract?' sel':''}" style="background:${ct.id===emp.contract?ct.bg:'none'};color:${ct.id===emp.contract?ct.col:'var(--txt)'}" onclick="selCt(this,'${ct.id}')">${ct.label}</button>`).join('')}</div>
     <input type="hidden" id="e-ct" value="${emp.contract}">
@@ -913,8 +925,11 @@ function addEmp(){
   const name=document.getElementById('e-name')?.value?.trim();
   const role=document.getElementById('e-role')?.value?.trim()||'Empleado';
   const ct=document.getElementById('e-ct')?.value||'40h';
+  const empId=document.getElementById('e-empid')?.value?.trim()||'';
+  const email=document.getElementById('e-email')?.value?.trim()||'';
+  const phone=document.getElementById('e-phone')?.value?.trim()||'';
   if(!name){document.getElementById('e-name').focus();return;}
-  employees.push({id:nextId++,name,role,contract:ct});
+  employees.push({id:nextId++,name,role,contract:ct,empId,email,phone});
   saveData();closeModal();renderTimeline();
   if(document.getElementById('emps').classList.contains('active'))renderEmps();
   toast('Empleado añadido');
@@ -924,6 +939,9 @@ function updEmp(id){
   emp.name=document.getElementById('e-name')?.value?.trim()||emp.name;
   emp.role=document.getElementById('e-role')?.value?.trim()||emp.role;
   emp.contract=document.getElementById('e-ct')?.value||emp.contract;
+  emp.empId=document.getElementById('e-empid')?.value?.trim()||emp.empId||'';
+  emp.email=document.getElementById('e-email')?.value?.trim()||emp.email||'';
+  emp.phone=document.getElementById('e-phone')?.value?.trim()||emp.phone||'';
   saveData();closeModal();renderEmps();renderTimeline();toast('Empleado actualizado');
 }
 function removeEmp(id){
