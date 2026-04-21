@@ -310,34 +310,57 @@ let weekPillOffset=0;
 let isAdmin=false;
 const ADMIN_PIN='4321';
 
-// ── Persistencia en localStorage ─────────────────────────────────────────────
+// ── Persistencia: Netlify Blobs via /api/data (con fallback a localStorage) ──
 
 let _saveTimer=null;
 function saveData(){
   try{localStorage.setItem('scb26_th',document.documentElement.getAttribute('data-theme'));}catch(_){}
   clearTimeout(_saveTimer);
-  _saveTimer=setTimeout(()=>{
+  _saveTimer=setTimeout(()=>_persist(),500);
+}
+async function _persist(){
+  const payload={employees,shifts,nextId};
+  // Guardar en servidor (Netlify Blobs)
+  try{
+    const res=await fetch('/api/data',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(payload),
+    });
+    if(!res.ok)throw new Error('HTTP '+res.status);
+  }catch(err){
+    console.warn('saveData: servidor no disponible, guardando en localStorage',err);
     try{
       localStorage.setItem('scb26_e',JSON.stringify(employees));
       localStorage.setItem('scb26_s',JSON.stringify(shifts));
       localStorage.setItem('scb26_id',String(nextId));
-    }catch(err){console.error('saveData error',err);}
-  },400);
+    }catch(_){}
+  }
 }
 async function loadData(){
+  // Tema: siempre localStorage (preferencia local del dispositivo)
   try{
     const th=localStorage.getItem('scb26_th');
     if(th)document.documentElement.setAttribute('data-theme',th);
   }catch(_){}
+  // Datos: intentar servidor primero, fallback a localStorage
   try{
-    const e=localStorage.getItem('scb26_e');
-    const s=localStorage.getItem('scb26_s');
-    const id=localStorage.getItem('scb26_id');
-    if(e)employees=JSON.parse(e);
-    if(s)shifts=JSON.parse(s);
-    if(id)nextId=parseInt(id)||nextId;
+    const res=await fetch('/api/data');
+    if(!res.ok)throw new Error('HTTP '+res.status);
+    const data=await res.json();
+    if(data.employees&&data.employees.length)employees=data.employees;
+    if(data.shifts)shifts=data.shifts;
+    if(data.nextId)nextId=parseInt(data.nextId)||nextId;
   }catch(err){
-    console.error('loadData error',err);
+    console.warn('loadData: usando localStorage como fallback',err);
+    try{
+      const e=localStorage.getItem('scb26_e');
+      const s=localStorage.getItem('scb26_s');
+      const id=localStorage.getItem('scb26_id');
+      if(e)employees=JSON.parse(e);
+      if(s)shifts=JSON.parse(s);
+      if(id)nextId=parseInt(id)||nextId;
+    }catch(_){}
   }
 }
 
