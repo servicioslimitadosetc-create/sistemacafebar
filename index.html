@@ -88,6 +88,12 @@ textarea{resize:vertical;min-height:80px;line-height:1.6}
 .emp-pill{padding:1px 6px;border-radius:8px;font-size:8px;font-weight:600;display:inline-block;margin-top:1px}
 .emp-bar-wrap{height:2px;background:var(--brd);border-radius:2px;overflow:hidden;margin-top:3px}
 .emp-bar-fill{height:100%;border-radius:2px;transition:width .3s}
+.emp-arrows{display:flex;flex-direction:column;gap:2px;flex-shrink:0}
+.emp-arrow-btn{width:17px;height:17px;border-radius:4px;border:0.5px solid var(--brd2);background:none;color:var(--txt3);font-size:7px;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0;line-height:1;transition:all .1s;flex-shrink:0}
+.emp-arrow-btn:hover:not(:disabled){background:var(--info-bg);color:#0c447c;border-color:#378add}
+.emp-arrow-btn:disabled{opacity:.18;cursor:default}
+.clear-day-btn{flex-shrink:0;width:19px;height:19px;border-radius:4px;border:0.5px solid var(--brd2);background:none;color:var(--txt3);font-size:11px;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0;line-height:1;transition:all .1s}
+.clear-day-btn:hover{background:#fcebeb;color:#c0392b;border-color:#c0392b}
 
 .hours-hdr{background:var(--bg2);border-bottom:0.5px solid var(--brd);position:relative}
 .grid-rows{position:relative}
@@ -209,7 +215,7 @@ textarea{resize:vertical;min-height:80px;line-height:1.6}
         <div class="timeline-wrap" id="timeline-wrap"></div>
       </div>
     </div>
-    <p class="hint">Activa el modo Admin para editar · Arrastra para mover · Estira bordes para ajustar duración · Horario partido: hasta 2 turnos por día · Duplica turnos a otros días al guardar</p>
+    <p class="hint">Activa el modo Admin para editar · Arrastra turnos para moverlos · Estira bordes para ajustar duración · Hasta 2 turnos por día · Duplica a otros días al guardar · Admin: ▲▼ para reordenar empleados · ✕ para limpiar el día de un empleado</p>
   </div>
 
   <div id="summary" class="view">
@@ -303,46 +309,34 @@ let weekPillOffset=0;
 let isAdmin=false;
 const ADMIN_PIN='4321';
 
-// ── Persistencia en servidor (Netlify Blobs via /api/data) ──────────────────
-// El tema (dark/light) se sigue guardando en localStorage: es preferencia local
-// y no tiene sentido sincronizarla entre dispositivos.
+// ── Persistencia en localStorage ─────────────────────────────────────────────
 
 let _saveTimer=null;
 function saveData(){
-  // El tema va siempre a localStorage (es local, no del servidor)
   try{localStorage.setItem('scb26_th',document.documentElement.getAttribute('data-theme'));}catch(_){}
-  // Debounce de 600 ms para no saturar el servidor con cada píxel arrastrado
   clearTimeout(_saveTimer);
-  _saveTimer=setTimeout(()=>_persistToServer(),600);
-}
-async function _persistToServer(){
-  try{
-    const res=await fetch('/api/data',{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({employees,shifts,nextId}),
-    });
-    if(!res.ok)console.warn('saveData: respuesta no-OK',res.status);
-  }catch(err){
-    console.error('saveData: error de red',err);
-  }
+  _saveTimer=setTimeout(()=>{
+    try{
+      localStorage.setItem('scb26_e',JSON.stringify(employees));
+      localStorage.setItem('scb26_s',JSON.stringify(shifts));
+      localStorage.setItem('scb26_id',String(nextId));
+    }catch(err){console.error('saveData error',err);}
+  },400);
 }
 async function loadData(){
-  // El tema lo cargamos de localStorage (preferencia local del dispositivo)
   try{
     const th=localStorage.getItem('scb26_th');
     if(th)document.documentElement.setAttribute('data-theme',th);
   }catch(_){}
-  // El resto de datos vienen del servidor
   try{
-    const res=await fetch('/api/data');
-    if(!res.ok)throw new Error('HTTP '+res.status);
-    const data=await res.json();
-    if(data.employees)employees=data.employees;
-    if(data.shifts)shifts=data.shifts;
-    if(data.nextId)nextId=parseInt(data.nextId)||nextId;
+    const e=localStorage.getItem('scb26_e');
+    const s=localStorage.getItem('scb26_s');
+    const id=localStorage.getItem('scb26_id');
+    if(e)employees=JSON.parse(e);
+    if(s)shifts=JSON.parse(s);
+    if(id)nextId=parseInt(id)||nextId;
   }catch(err){
-    console.error('loadData: error cargando desde servidor, usando datos locales',err);
+    console.error('loadData error',err);
   }
 }
 
@@ -523,18 +517,79 @@ function renderTimeline(){
     const stats=getEmpStats(emp);
     const pct=ct.hours>0?Math.min(100,Math.round(stats.total/ct.hours*100)):0;
     const bc=stats.extra>0?'#e24b4a':stats.total>=ct.hours?'#639922':'#378add';
+
     const lr=document.createElement('div');
     lr.className='label-row';lr.style.height=ROW_H+'px';
-    lr.innerHTML=`
-      <div class="emp-dot" style="background:${c.dot}"></div>
-      <div class="emp-info">
-        <div class="emp-n" title="${emp.name}">${emp.name.split(' ')[0]}</div>
-        <div style="display:flex;align-items:center;gap:4px">
-          <span class="emp-pill" style="background:${ct.bg};color:${ct.col}">${ct.label}</span>
-          <span style="font-size:9px;color:var(--txt2)">${stats.total}/${ct.hours||'—'}h</span>
-        </div>
-        <div class="emp-bar-wrap"><div class="emp-bar-fill" style="width:${pct}%;background:${bc}"></div></div>
-      </div>`;
+
+    /* colour dot */
+    const dot=document.createElement('div');
+    dot.className='emp-dot';dot.style.background=c.dot;
+    lr.appendChild(dot);
+
+    /* name + pill + bar */
+    const info=document.createElement('div');
+    info.className='emp-info';
+    info.innerHTML=`
+      <div class="emp-n" title="${emp.name}">${emp.name.split(' ')[0]}</div>
+      <div style="display:flex;align-items:center;gap:4px">
+        <span class="emp-pill" style="background:${ct.bg};color:${ct.col}">${ct.label}</span>
+        <span style="font-size:9px;color:var(--txt2)">${stats.total}/${ct.hours||'—'}h</span>
+      </div>
+      <div class="emp-bar-wrap"><div class="emp-bar-fill" style="width:${pct}%;background:${bc}"></div></div>`;
+    lr.appendChild(info);
+
+    /* ▲ ▼ reorder arrows (admin only) */
+    if(isAdmin){
+      const arrows=document.createElement('div');
+      arrows.className='emp-arrows';
+
+      const upBtn=document.createElement('button');
+      upBtn.className='emp-arrow-btn';
+      upBtn.title='Subir empleado';
+      upBtn.innerHTML='▲';
+      upBtn.disabled=(ei===0);
+      upBtn.onclick=(e)=>{
+        e.stopPropagation();
+        if(ei===0)return;
+        employees.splice(ei-1,0,employees.splice(ei,1)[0]);
+        saveData();renderTimeline();
+        toast('Empleado subido');
+      };
+
+      const dnBtn=document.createElement('button');
+      dnBtn.className='emp-arrow-btn';
+      dnBtn.title='Bajar empleado';
+      dnBtn.innerHTML='▼';
+      dnBtn.disabled=(ei===employees.length-1);
+      dnBtn.onclick=(e)=>{
+        e.stopPropagation();
+        if(ei===employees.length-1)return;
+        employees.splice(ei+1,0,employees.splice(ei,1)[0]);
+        saveData();renderTimeline();
+        toast('Empleado bajado');
+      };
+
+      arrows.appendChild(upBtn);
+      arrows.appendChild(dnBtn);
+      lr.appendChild(arrows);
+
+      /* ✕ clear-day button (admin only) */
+      const clrBtn=document.createElement('button');
+      clrBtn.className='clear-day-btn';
+      clrBtn.title='Limpiar turnos de hoy';
+      clrBtn.innerHTML='✕';
+      clrBtn.onclick=(e)=>{
+        e.stopPropagation();
+        const k0=shiftKey(emp.id,activeWeekIdx,activeDay,0);
+        const k1=shiftKey(emp.id,activeWeekIdx,activeDay,1);
+        if(!shifts[k0]&&!shifts[k1]){toast('Sin turnos que limpiar');return;}
+        delete shifts[k0];delete shifts[k1];
+        saveData();renderTimeline();
+        toast(`${emp.name.split(' ')[0]} — día limpiado`);
+      };
+      lr.appendChild(clrBtn);
+    }
+
     labCol.appendChild(lr);
   });
   wrap.appendChild(labCol);
