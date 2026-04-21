@@ -1,7 +1,7 @@
 const { getStore } = require('@netlify/blobs');
 
-const STORE_NAME = 'cafebar';
-const KEY = 'appdata';
+const STORE_NAME = 'scb26';
+const KEY = 'state';
 
 exports.handler = async (event) => {
   const store = getStore(STORE_NAME);
