@@ -1,57 +1,51 @@
-import { getStore } from "@netlify/blobs";
+const { getStore } = require('@netlify/blobs');
 
-const STORE_NAME = "scb26";
-const STATE_KEY  = "state";
+const STORE_NAME = 'cafebar';
+const KEY = 'appdata';
 
-// Datos semilla por si el store está vacío (primera vez)
-const DEFAULT_STATE = {
-  employees: [
-    {id:1,name:'Ana Martínez',role:'Camarera',contract:'40h'},
-    {id:2,name:'Carlos López',role:'Barista',contract:'40h'},
-    {id:3,name:'María García',role:'Camarera',contract:'30h'},
-    {id:4,name:'Javier Ruiz',role:'Cocinero',contract:'40h'},
-    {id:5,name:'Laura Sanz',role:'Ayudante',contract:'20h'},
-    {id:6,name:'Pedro Moreno',role:'Camarero',contract:'40h'},
-    {id:7,name:'Sofía Castro',role:'Barista',contract:'30h'},
-    {id:8,name:'Rubén Torres',role:'Ayudante',contract:'20h'},
-  ],
-  shifts: {},
-  nextId: 9,
-};
-
-export default async (req, context) => {
+exports.handler = async (event) => {
   const store = getStore(STORE_NAME);
 
-  // GET — devuelve el estado completo
-  if (req.method === "GET") {
+  // GET: cargar datos
+  if (event.httpMethod === 'GET') {
     try {
-      const data = await store.get(STATE_KEY, { type: "json" });
-      return Response.json(data ?? DEFAULT_STATE);
-    } catch (err) {
-      console.error("GET error:", err);
-      return Response.json(DEFAULT_STATE);
-    }
-  }
-
-  // POST — guarda el estado completo
-  if (req.method === "POST") {
-    try {
-      const body = await req.json();
-      // Validación mínima: que tenga las claves esperadas
-      if (!body || typeof body !== "object" || !Array.isArray(body.employees)) {
-        return Response.json({ ok: false, error: "Payload inválido" }, { status: 400 });
+      const raw = await store.get(KEY);
+      if (!raw) {
+        return {
+          statusCode: 200,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ employees: [], shifts: {}, nextId: 9 }),
+        };
       }
-      await store.set(STATE_KEY, JSON.stringify(body));
-      return Response.json({ ok: true });
+      return {
+        statusCode: 200,
+        headers: { 'Content-Type': 'application/json' },
+        body: raw,
+      };
     } catch (err) {
-      console.error("POST error:", err);
-      return Response.json({ ok: false, error: String(err) }, { status: 500 });
+      return {
+        statusCode: 500,
+        body: JSON.stringify({ error: err.message }),
+      };
     }
   }
 
-  return Response.json({ error: "Método no permitido" }, { status: 405 });
-};
+  // POST: guardar datos
+  if (event.httpMethod === 'POST') {
+    try {
+      await store.set(KEY, event.body);
+      return {
+        statusCode: 200,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ok: true }),
+      };
+    } catch (err) {
+      return {
+        statusCode: 500,
+        body: JSON.stringify({ error: err.message }),
+      };
+    }
+  }
 
-export const config = {
-  path: "/api/data",
+  return { statusCode: 405, body: 'Method Not Allowed' };
 };
