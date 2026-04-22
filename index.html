@@ -75,9 +75,9 @@ textarea{resize:vertical;min-height:80px;line-height:1.6}
 .day-btn.today.active{color:var(--accent-inv)}
 
 .sched-card{background:var(--bg);border:0.5px solid var(--brd);border-radius:12px;overflow:hidden}
-.sched-scroll{overflow-x:auto}
+.sched-scroll{overflow-x:auto;position:relative}
 .timeline-wrap{display:flex;min-width:max-content}
-.col-labels{flex-shrink:0;border-right:0.5px solid var(--brd)}
+.col-labels{flex-shrink:0;border-right:0.5px solid var(--brd);position:sticky;left:0;z-index:30;background:var(--bg)}
 .label-hdr{background:var(--bg2);border-bottom:0.5px solid var(--brd);display:flex;align-items:center;padding:0 10px}
 .label-hdr-txt{font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--txt3)}
 .label-row{border-bottom:0.5px solid var(--brd);display:flex;align-items:center;padding:0 8px;gap:7px;background:var(--bg)}
@@ -175,6 +175,21 @@ textarea{resize:vertical;min-height:80px;line-height:1.6}
 .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(8px);background:var(--txt);color:var(--bg);padding:8px 18px;border-radius:20px;font-size:12px;font-weight:500;z-index:300;opacity:0;transition:all .2s;pointer-events:none;white-space:nowrap}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 .hint{font-size:10px;color:var(--txt3);margin-top:8px;line-height:1.7}
+
+/* ── Vista semanal ── */
+.week-grid{display:grid;min-width:max-content}
+.week-hdr-row{display:flex;background:var(--bg2);border-bottom:0.5px solid var(--brd);position:sticky;top:0;z-index:20}
+.week-hdr-corner{flex-shrink:0;border-right:0.5px solid var(--brd);background:var(--bg2)}
+.week-day-hdr{flex:0 0 160px;padding:6px 10px;border-right:0.5px solid var(--brd);font-size:10px;font-weight:600;color:var(--txt2);text-align:center;line-height:1.4}
+.week-day-hdr.today-col{background:color-mix(in srgb,var(--info-bg) 40%,var(--bg2));color:var(--info-txt)}
+.week-emp-row{display:flex;border-bottom:0.5px solid var(--brd)}
+.week-emp-row:last-child{border-bottom:none}
+.week-emp-label{flex-shrink:0;display:flex;align-items:center;gap:6px;padding:0 8px;border-right:0.5px solid var(--brd);background:var(--bg);position:sticky;left:0;z-index:10}
+.week-day-cell{flex:0 0 160px;border-right:0.5px solid var(--brd);padding:4px 6px;display:flex;flex-direction:column;gap:3px;background:var(--bg);min-height:60px}
+.week-emp-row:nth-child(even) .week-day-cell{background:color-mix(in srgb,var(--bg2) 35%,var(--bg))}
+.week-shift-pill{border-radius:5px;padding:3px 6px;font-size:10px;font-weight:600;line-height:1.3;cursor:pointer;transition:opacity .1s}
+.week-shift-pill:hover{opacity:.8}
+.week-empty{font-size:10px;color:var(--txt3);padding:2px 0}
 </style>
 </head>
 <body>
@@ -203,7 +218,8 @@ textarea{resize:vertical;min-height:80px;line-height:1.6}
 
 <div class="main">
   <div class="tabs">
-    <button class="tab active" onclick="switchTab('sched',this)">Horario</button>
+    <button class="tab active" onclick="switchTab('sched',this)">Día</button>
+    <button class="tab" onclick="switchTab('week',this)">Semana</button>
     <button class="tab" onclick="switchTab('summary',this)">Resumen</button>
     <button class="tab" onclick="switchTab('emps',this)">Empleados</button>
   </div>
@@ -215,7 +231,16 @@ textarea{resize:vertical;min-height:80px;line-height:1.6}
         <div class="timeline-wrap" id="timeline-wrap"></div>
       </div>
     </div>
-    <p class="hint">Activa el modo Admin para editar · Arrastra turnos para moverlos · Estira bordes para ajustar duración · Hasta 2 turnos por día · Duplica a otros días al guardar · Admin: ▲▼ para reordenar empleados · ✕ para limpiar el día de un empleado</p>
+    <p class="hint">Activa el modo Admin para editar · Arrastra turnos para moverlos · Estira bordes para ajustar duración · Hasta 2 turnos por día · Duplica a otros días al guardar · Admin: ▲▼ para reordenar empleados (por día) · ✕ para limpiar el día de un empleado</p>
+  </div>
+
+  <div id="week" class="view">
+    <div class="sched-card">
+      <div class="sched-scroll">
+        <div id="week-wrap"></div>
+      </div>
+    </div>
+    <p class="hint">Vista de semana completa — solo lectura. Cambia al modo Día para editar turnos.</p>
   </div>
 
   <div id="summary" class="view">
@@ -305,6 +330,7 @@ function shiftKey(eid,wi,di,slot){return`${eid}_w${wi}_d${di}_s${slot===undefine
 let activeWeekIdx=getWeekIndexForToday();
 let activeDay=Math.max(0,(new Date().getDay()||7)-1);
 let employees,shifts,nextId;
+let dayOrder={};  // dayOrder[weekIdx][dayIdx] = [empId, empId, ...]
 let dragState=null;
 let weekPillOffset=0;
 let isAdmin=false;
@@ -319,7 +345,7 @@ function saveData(){
   _saveTimer=setTimeout(()=>_persist(),500);
 }
 async function _persist(){
-  const payload={employees,shifts,nextId};
+  const payload={employees,shifts,nextId,dayOrder};
   // Guardar en servidor (Netlify Blobs)
   try{
     const res=await fetch('/api/data',{
@@ -351,6 +377,7 @@ async function loadData(){
     if(data.employees&&data.employees.length)employees=data.employees;
     if(data.shifts)shifts=data.shifts;
     if(data.nextId)nextId=parseInt(data.nextId)||nextId;
+    if(data.dayOrder)dayOrder=data.dayOrder;
   }catch(err){
     console.warn('loadData: usando localStorage como fallback',err);
     try{
@@ -375,7 +402,7 @@ employees=[
   {id:7,name:'Sofía Castro',role:'Barista',contract:'30h'},
   {id:8,name:'Rubén Torres',role:'Ayudante',contract:'20h'},
 ];
-shifts={};nextId=9;
+shifts={};nextId=9;dayOrder={};
 
 function hToX(h){return(h-START_H)*SLOT_PX;}
 function xToH(x){return x/SLOT_PX+START_H;}
@@ -394,6 +421,23 @@ function timeToH(t){
   return hh;
 }
 function getContract(cid){return CONTRACTS.find(c=>c.id===cid)||CONTRACTS[2];}
+
+/* Returns employees in the order specific to (weekIdx, dayIdx), falling back to global order */
+function getOrderedEmployees(wi,di){
+  const key=`${wi}_${di}`;
+  const order=dayOrder[key];
+  if(!order||order.length===0)return [...employees];
+  const ordered=[];
+  order.forEach(id=>{const e=employees.find(x=>x.id===id);if(e)ordered.push(e);});
+  // add any employees not yet in this day's order
+  employees.forEach(e=>{if(!ordered.find(x=>x.id===e.id))ordered.push(e);});
+  return ordered;
+}
+
+function setDayOrder(wi,di,orderedEmps){
+  const key=`${wi}_${di}`;
+  dayOrder[key]=orderedEmps.map(e=>e.id);
+}
 
 function getDayTotal(eid,wi,di){
   let t=0;
@@ -527,6 +571,7 @@ function renderDayBar(){
 function renderTimeline(){
   const w=WEEKS[activeWeekIdx];
   const wrap=document.getElementById('timeline-wrap');wrap.innerHTML='';
+  const orderedEmps=getOrderedEmployees(activeWeekIdx,activeDay);
 
   const labCol=document.createElement('div');
   labCol.className='col-labels';labCol.style.width=LABEL_W+'px';
@@ -535,8 +580,9 @@ function renderTimeline(){
   lhdr.innerHTML=`<span class="label-hdr-txt">${DAYS_FULL[activeDay]} ${fmtDate(new Date(w.mon.getFullYear(),w.mon.getMonth(),w.mon.getDate()+activeDay))}</span>`;
   labCol.appendChild(lhdr);
 
-  employees.forEach((emp,ei)=>{
-    const c=COLORS[ei%COLORS.length];
+  orderedEmps.forEach((emp,ei)=>{
+    const globalEi=employees.findIndex(e=>e.id===emp.id);
+    const c=COLORS[globalEi%COLORS.length];
     const ct=getContract(emp.contract);
     const stats=getEmpStats(emp);
     const pct=ct.hours>0?Math.min(100,Math.round(stats.total/ct.hours*100)):0;
@@ -545,12 +591,10 @@ function renderTimeline(){
     const lr=document.createElement('div');
     lr.className='label-row';lr.style.height=ROW_H+'px';
 
-    /* colour dot */
     const dot=document.createElement('div');
     dot.className='emp-dot';dot.style.background=c.dot;
     lr.appendChild(dot);
 
-    /* name + pill + bar */
     const info=document.createElement('div');
     info.className='emp-info';
     info.innerHTML=`
@@ -562,42 +606,44 @@ function renderTimeline(){
       <div class="emp-bar-wrap"><div class="emp-bar-fill" style="width:${pct}%;background:${bc}"></div></div>`;
     lr.appendChild(info);
 
-    /* ▲ ▼ reorder arrows (admin only) */
     if(isAdmin){
       const arrows=document.createElement('div');
       arrows.className='emp-arrows';
 
       const upBtn=document.createElement('button');
       upBtn.className='emp-arrow-btn';
-      upBtn.title='Subir empleado';
+      upBtn.title='Subir en este día';
       upBtn.innerHTML='▲';
       upBtn.disabled=(ei===0);
       upBtn.onclick=(e)=>{
         e.stopPropagation();
         if(ei===0)return;
-        employees.splice(ei-1,0,employees.splice(ei,1)[0]);
+        const copy=[...orderedEmps];
+        copy.splice(ei-1,0,copy.splice(ei,1)[0]);
+        setDayOrder(activeWeekIdx,activeDay,copy);
         saveData();renderTimeline();
-        toast('Empleado subido');
+        toast('Orden actualizado para este día');
       };
 
       const dnBtn=document.createElement('button');
       dnBtn.className='emp-arrow-btn';
-      dnBtn.title='Bajar empleado';
+      dnBtn.title='Bajar en este día';
       dnBtn.innerHTML='▼';
-      dnBtn.disabled=(ei===employees.length-1);
+      dnBtn.disabled=(ei===orderedEmps.length-1);
       dnBtn.onclick=(e)=>{
         e.stopPropagation();
-        if(ei===employees.length-1)return;
-        employees.splice(ei+1,0,employees.splice(ei,1)[0]);
+        if(ei===orderedEmps.length-1)return;
+        const copy=[...orderedEmps];
+        copy.splice(ei+1,0,copy.splice(ei,1)[0]);
+        setDayOrder(activeWeekIdx,activeDay,copy);
         saveData();renderTimeline();
-        toast('Empleado bajado');
+        toast('Orden actualizado para este día');
       };
 
       arrows.appendChild(upBtn);
       arrows.appendChild(dnBtn);
       lr.appendChild(arrows);
 
-      /* ✕ clear-day button (admin only) */
       const clrBtn=document.createElement('button');
       clrBtn.className='clear-day-btn';
       clrBtn.title='Limpiar turnos de hoy';
@@ -654,7 +700,8 @@ function renderTimeline(){
     }
   }
 
-  employees.forEach((emp,ei)=>{
+  orderedEmps.forEach((emp,ei)=>{
+    const globalEi=employees.findIndex(e=>e.id===emp.id);
     const row=document.createElement('div');
     row.className='grid-row';row.style.height=ROW_H+'px';
 
@@ -677,12 +724,10 @@ function renderTimeline(){
       const key=shiftKey(emp.id,activeWeekIdx,activeDay,slot);
       const sh=shifts[key];
       if(!sh)return;
-      const c=slot===0?COLORS[ei%COLORS.length]:COLORS2[ei%COLORS2.length];
+      const c=slot===0?COLORS[globalEi%COLORS.length]:COLORS2[globalEi%COLORS2.length];
       const x=hToX(sh.start);
       const bw=Math.max(14,(sh.end-sh.start)*SLOT_PX);
       const hrs=Math.round((sh.end-sh.start)*10)/10;
-
-      /* Split shift: each occupies half the row height */
       const topOff=slot===0?'4px':'calc(50% + 2px)';
       const botOff=slot===0?'calc(50% + 2px)':'4px';
 
@@ -976,12 +1021,94 @@ function removeEmp(id){
   toast('Empleado eliminado');
 }
 
+function renderWeekView(){
+  const w=WEEKS[activeWeekIdx];
+  const today=new Date();today.setHours(0,0,0,0);
+  const wrap=document.getElementById('week-wrap');
+  wrap.innerHTML='';
+
+  const WEEK_LABEL_W=LABEL_W+'px';
+  const DAY_W='160px';
+
+  // Header row
+  const hdrRow=document.createElement('div');
+  hdrRow.className='week-hdr-row';
+  const corner=document.createElement('div');
+  corner.className='week-hdr-corner';
+  corner.style.cssText=`width:${WEEK_LABEL_W};height:${HDR_H}px;flex-shrink:0`;
+  hdrRow.appendChild(corner);
+  DAYS.forEach((d,di)=>{
+    const dayDate=new Date(w.mon);dayDate.setDate(w.mon.getDate()+di);
+    const isToday=dayDate.getTime()===today.getTime();
+    const dh=document.createElement('div');
+    dh.className='week-day-hdr'+(isToday?' today-col':'');
+    dh.style.cssText=`flex:0 0 ${DAY_W}`;
+    dh.innerHTML=`<div>${d} ${dayDate.getDate()}</div><div style="font-size:9px;opacity:.6">${['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][dayDate.getMonth()]}</div>`;
+    hdrRow.appendChild(dh);
+  });
+  wrap.appendChild(hdrRow);
+
+  // Employee rows
+  employees.forEach((emp,ei)=>{
+    const c=COLORS[ei%COLORS.length];
+    const ct=getContract(emp.contract);
+    const empRow=document.createElement('div');
+    empRow.className='week-emp-row';
+
+    // sticky label
+    const lbl=document.createElement('div');
+    lbl.className='week-emp-label';
+    lbl.style.cssText=`width:${WEEK_LABEL_W};height:${ROW_H}px`;
+    lbl.innerHTML=`
+      <div class="emp-dot" style="background:${c.dot}"></div>
+      <div class="emp-info">
+        <div class="emp-n" title="${emp.name}">${emp.name.split(' ')[0]}</div>
+        <span class="emp-pill" style="background:${ct.bg};color:${ct.col}">${ct.label}</span>
+      </div>`;
+    empRow.appendChild(lbl);
+
+    DAYS.forEach((_,di)=>{
+      const cell=document.createElement('div');
+      cell.className='week-day-cell';
+      cell.style.cssText=`flex:0 0 ${DAY_W};height:${ROW_H}px`;
+
+      const dayDate=new Date(w.mon);dayDate.setDate(w.mon.getDate()+di);
+      const isToday=dayDate.getTime()===today.getTime();
+      if(isToday)cell.style.background='color-mix(in srgb,var(--info-bg) 20%,var(--bg))';
+
+      let hasShift=false;
+      [0,1].forEach(slot=>{
+        const sh=shifts[shiftKey(emp.id,activeWeekIdx,di,slot)];
+        if(!sh)return;
+        hasShift=true;
+        const hrs=Math.round((sh.end-sh.start)*10)/10;
+        const cc=slot===0?c:COLORS2[ei%COLORS2.length];
+        const pill=document.createElement('div');
+        pill.className='week-shift-pill';
+        pill.style.cssText=`background:${cc.bg};color:${cc.col}`;
+        pill.title=`${emp.name} — ${hToStr(sh.start)}–${hToStr(sh.end)} (${hrs}h)`;
+        pill.innerHTML=`${hToStr(sh.start)}–${hToStr(sh.end)}<br><span style="font-size:9px;opacity:.75">${hrs}h</span>`;
+        pill.onclick=()=>{activeDay=di;switchTab('sched',document.querySelector('.tab'));renderDayBar();renderTimeline();};
+        cell.appendChild(pill);
+      });
+      if(!hasShift){
+        const emp2=document.createElement('div');
+        emp2.className='week-empty';emp2.textContent='—';
+        cell.appendChild(emp2);
+      }
+      empRow.appendChild(cell);
+    });
+    wrap.appendChild(empRow);
+  });
+}
+
 function switchTab(id,el){
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
   el.classList.add('active');document.getElementById(id).classList.add('active');
   if(id==='summary')renderSummary();
   if(id==='emps')renderEmps();
+  if(id==='week')renderWeekView();
 }
 
 function exportCSV(){
