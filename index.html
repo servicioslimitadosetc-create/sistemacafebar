@@ -197,6 +197,7 @@ textarea{resize:vertical;min-height:80px;line-height:1.6}
 <div class="header">
   <div class="logo">Sistema Café Bar <span>2026</span></div>
   <span id="admin-badge" style="font-size:10px;font-weight:600;color:#fff;padding:3px 10px;border-radius:10px;background:#888;flex-shrink:0">Solo lectura</span>
+  <span id="sync-status" title="Estado de sincronización" style="font-size:10px;padding:3px 9px;border-radius:10px;background:#e8f5e9;color:#2e7d32;border:0.5px solid #a5d6a7;flex-shrink:0;cursor:default">⟳ Cargando...</span>
   <button class="hdr-btn" onclick="goToCurrentWeek()">Hoy</button>
   <button class="hdr-btn" id="btn-add-emp" style="display:none" onclick="showAddEmpModal()">+ Empleado</button>
   <button class="hdr-btn" onclick="exportCSV()">Exportar CSV</button>
@@ -338,15 +339,33 @@ const ADMIN_PIN='4321';
 
 // ── Persistencia: Netlify Blobs via /api/data (con fallback a localStorage) ──
 
+function fmtNow(){
+  const n=new Date();
+  return n.toLocaleDateString('es-ES',{day:'2-digit',month:'2-digit'})+' '+n.toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit'});
+}
+function setSyncStatus(state,detail){
+  const el=document.getElementById('sync-status');if(!el)return;
+  const cfg={
+    ok:  {bg:'#e8f5e9',col:'#2e7d32',brd:'#a5d6a7',icon:'✓'},
+    warn:{bg:'#fff8e1',col:'#f57f17',brd:'#ffe082',icon:'⚠'},
+    err: {bg:'#ffebee',col:'#c62828',brd:'#ef9a9a',icon:'✕'},
+    load:{bg:'#e3f2fd',col:'#1565c0',brd:'#90caf9',icon:'⟳'},
+  };
+  const s=cfg[state]||cfg.load;
+  el.style.cssText=`font-size:10px;padding:3px 9px;border-radius:10px;background:${s.bg};color:${s.col};border:0.5px solid ${s.brd};flex-shrink:0;cursor:default`;
+  el.textContent=`${s.icon} ${detail}`;
+  el.title=detail;
+}
+
 let _saveTimer=null;
 function saveData(){
   try{localStorage.setItem('scb26_th',document.documentElement.getAttribute('data-theme'));}catch(_){}
   clearTimeout(_saveTimer);
+  setSyncStatus('load','Guardando...');
   _saveTimer=setTimeout(()=>_persist(),500);
 }
 async function _persist(){
   const payload={employees,shifts,nextId,dayOrder};
-  // Guardar en servidor (Netlify Blobs)
   try{
     const res=await fetch('/api/data',{
       method:'POST',
@@ -354,22 +373,34 @@ async function _persist(){
       body:JSON.stringify(payload),
     });
     if(!res.ok)throw new Error('HTTP '+res.status);
-  }catch(err){
-    console.warn('saveData: servidor no disponible, guardando en localStorage',err);
+    // Guardar también en localStorage como backup
     try{
       localStorage.setItem('scb26_e',JSON.stringify(employees));
       localStorage.setItem('scb26_s',JSON.stringify(shifts));
       localStorage.setItem('scb26_id',String(nextId));
+      localStorage.setItem('scb26_do',JSON.stringify(dayOrder));
+      localStorage.setItem('scb26_saved',fmtNow());
     }catch(_){}
+    setSyncStatus('ok','Guardado '+fmtNow());
+    console.log('[SCB] Datos guardados en servidor',fmtNow());
+  }catch(err){
+    console.warn('[SCB] Servidor no disponible, guardando en localStorage',err);
+    try{
+      localStorage.setItem('scb26_e',JSON.stringify(employees));
+      localStorage.setItem('scb26_s',JSON.stringify(shifts));
+      localStorage.setItem('scb26_id',String(nextId));
+      localStorage.setItem('scb26_do',JSON.stringify(dayOrder));
+      localStorage.setItem('scb26_saved',fmtNow());
+    }catch(_){}
+    setSyncStatus('warn','Solo local · '+fmtNow());
   }
 }
 async function loadData(){
-  // Tema: siempre localStorage (preferencia local del dispositivo)
+  setSyncStatus('load','Cargando...');
   try{
     const th=localStorage.getItem('scb26_th');
     if(th)document.documentElement.setAttribute('data-theme',th);
   }catch(_){}
-  // Datos: intentar servidor primero, fallback a localStorage
   try{
     const res=await fetch('/api/data');
     if(!res.ok)throw new Error('HTTP '+res.status);
@@ -378,31 +409,47 @@ async function loadData(){
     if(data.shifts)shifts=data.shifts;
     if(data.nextId)nextId=parseInt(data.nextId)||nextId;
     if(data.dayOrder)dayOrder=data.dayOrder;
+    // Actualizar también el backup local
+    try{
+      localStorage.setItem('scb26_e',JSON.stringify(employees));
+      localStorage.setItem('scb26_s',JSON.stringify(shifts));
+      localStorage.setItem('scb26_id',String(nextId));
+      localStorage.setItem('scb26_do',JSON.stringify(dayOrder));
+      localStorage.setItem('scb26_loaded',fmtNow());
+    }catch(_){}
+    setSyncStatus('ok','Cargado · '+fmtNow());
+    console.log('[SCB] Datos cargados del servidor',fmtNow(),{empleados:employees.length,turnos:Object.keys(shifts).length});
   }catch(err){
-    console.warn('loadData: usando localStorage como fallback',err);
+    console.warn('[SCB] Servidor no disponible, usando backup local',err);
     try{
       const e=localStorage.getItem('scb26_e');
       const s=localStorage.getItem('scb26_s');
       const id=localStorage.getItem('scb26_id');
-      if(e)employees=JSON.parse(e);
-      if(s)shifts=JSON.parse(s);
-      if(id)nextId=parseInt(id)||nextId;
-    }catch(_){}
+      const dо=localStorage.getItem('scb26_do');
+      const saved=localStorage.getItem('scb26_loaded')||localStorage.getItem('scb26_saved');
+      if(e&&JSON.parse(e).length){
+        employees=JSON.parse(e);
+        shifts=JSON.parse(s||'{}');
+        nextId=parseInt(id)||nextId;
+        dayOrder=JSON.parse(dо||'{}');
+        setSyncStatus('warn',`Local · último servidor: ${saved||'desconocido'}`);
+        console.warn('[SCB] Usando datos locales. Último guardado en servidor:',saved);
+      } else {
+        setSyncStatus('warn','Datos de emergencia · servidor no disponible');
+        console.warn('[SCB] Sin backup local, usando SEED_DATA');
+      }
+    }catch(_){
+      setSyncStatus('err','Error al cargar datos');
+    }
   }
 }
+// ── Datos de emergencia (última copia conocida — el servidor los sobreescribe si responde) ──
+const SEED_DATA = {"employees":[{"id":1,"name":"Alberto","role":"CEO","contract":"40h","empId":"","email":"","phone":""},{"id":2,"name":"Miguel","role":"Camarero","contract":"40h"},{"id":9,"name":"Santiago","role":"Barista","contract":"20h","empId":"","email":"","phone":""},{"id":10,"name":"Diego","role":"Cocina","contract":"40h","empId":"","email":"","phone":""},{"id":5,"name":"Andrea","role":"Cocinera","contract":"20h"},{"id":4,"name":"Héctor","role":"Camarero","contract":"30h"},{"id":7,"name":"Carolina","role":"Camarera","contract":"20h"},{"id":11,"name":"Carmen","role":"Camarera","contract":"10h","empId":"","email":"","phone":""},{"id":13,"name":"Rex","role":"Camarero","contract":"40h","empId":"","email":"","phone":""}],"shifts":{"5_w13_d5_s0":{"start":17,"end":21},"2_w13_d5_s0":{"start":17,"end":21},"1_w14_d1_s0":{"start":32,"end":32.25},"1_w14_d2_s0":{"start":32,"end":32.25},"1_w15_d4_s0":{"start":9,"end":19},"2_w15_d4_s0":{"start":9,"end":17},"4_w15_d4_s0":{"start":19,"end":24},"9_w15_d4_s0":{"start":9,"end":13},"2_w16_d1_s0":{"start":9,"end":17},"5_w16_d1_s0":{"start":13,"end":16},"9_w16_d4_s0":{"start":8.5,"end":13},"9_w16_d2_s0":{"start":8.5,"end":13},"9_w16_d3_s0":{"start":8.5,"end":13},"9_w16_d0_s0":{"start":8,"end":13},"1_w16_d0_s0":{"start":10.5,"end":23.5},"1_w16_d1_s0":{"start":8,"end":19.5},"1_w16_d2_s0":{"start":9.5,"end":21.75},"5_w16_d2_s0":{"start":19,"end":23},"7_w16_d2_s0":{"start":19,"end":23},"7_w16_d1_s0":{"start":19,"end":23},"7_w16_d3_s0":{"start":19,"end":23},"7_w16_d4_s0":{"start":20,"end":24},"7_w16_d5_s0":{"start":19,"end":23},"4_w16_d2_s0":{"start":19.5,"end":24.5},"4_w16_d1_s0":{"start":19.5,"end":24.5},"4_w16_d3_s0":{"start":19.5,"end":24.5},"4_w16_d5_s0":{"start":19.5,"end":24.5},"10_w16_d2_s0":{"start":15,"end":23},"10_w16_d3_s0":{"start":15,"end":23},"2_w16_d2_s0":{"start":9,"end":17},"2_w16_d4_s0":{"start":9,"end":17},"4_w16_d4_s0":{"start":19,"end":24},"4_w16_d6_s0":{"start":19.5,"end":24.5},"2_w16_d5_s0":{"start":12.5,"end":20.5},"1_w16_d5_s0":{"start":12.5,"end":19.75},"5_w16_d5_s0":{"start":13,"end":16},"2_w16_d6_s0":{"start":9.5,"end":17.5},"1_w16_d4_s0":{"start":8,"end":16},"1_w16_d3_s0":{"start":8,"end":19.5},"9_w16_d4_s1":{"start":15,"end":19},"11_w16_d3_s0":{"start":21,"end":24},"11_w16_d5_s0":{"start":21,"end":24},"5_w16_d4_s0":{"start":19,"end":23},"5_w16_d5_s1":{"start":19,"end":23},"5_w16_d6_s0":{"start":13,"end":16},"11_w16_d6_s0":{"start":19,"end":23},"1_w16_d6_s0":{"start":9,"end":23},"10_w16_d4_s0":{"start":13,"end":16},"10_w16_d5_s0":{"start":13,"end":16},"10_w16_d6_s0":{"start":13,"end":16},"10_w16_d4_s1":{"start":19.5,"end":24.5},"10_w16_d5_s1":{"start":19.5,"end":24.5},"10_w16_d6_s1":{"start":19.5,"end":24.5},"2_w16_d0_s0":{"start":8.5,"end":16.5},"11_w16_d0_s0":{"start":19.5,"end":23.5},"7_w16_d0_s0":{"start":17,"end":21},"9_w16_d1_s0":{"start":8.5,"end":13},"9_w16_d2_s1":{"start":8.5,"end":13},"9_w16_d3_s1":{"start":8.5,"end":13},"1_w17_d0_s0":{"start":10.5,"end":23},"2_w17_d0_s0":{"start":8.5,"end":17.5},"9_w17_d0_s0":{"start":8.5,"end":13},"9_w17_d1_s0":{"start":8.5,"end":13},"9_w17_d1_s1":{"start":10.5,"end":14.5},"9_w17_d2_s1":{"start":10.5,"end":14.5},"9_w17_d3_s1":{"start":10.5,"end":14.5},"9_w17_d4_s1":{"start":10.5,"end":14.5},"1_w17_d1_s0":{"start":8,"end":19},"7_w17_d0_s0":{"start":16.5,"end":20.5},"11_w17_d0_s0":{"start":20.5,"end":23.5},"2_w17_d5_s0":{"start":13,"end":21},"10_w17_d5_s0":{"start":13,"end":16},"10_w17_d5_s1":{"start":19.5,"end":23.5},"5_w17_d5_s0":{"start":19,"end":23},"1_w17_d5_s0":{"start":13,"end":19.5},"4_w17_d5_s0":{"start":19.5,"end":24},"11_w17_d5_s0":{"start":21,"end":24},"1_w17_d6_s0":{"start":10,"end":23},"2_w17_d6_s0":{"start":10,"end":18},"10_w17_d6_s0":{"start":10,"end":18},"13_w17_d6_s0":{"start":15,"end":23},"5_w17_d6_s0":{"start":19,"end":23},"13_w17_d5_s0":{"start":13,"end":21},"1_w18_d0_s0":{"start":11,"end":23.5},"2_w18_d0_s0":{"start":8.5,"end":16.5},"9_w18_d0_s0":{"start":8,"end":13},"5_w18_d0_s0":{"start":19,"end":23},"9_w18_d1_s0":{"start":8.5,"end":13},"9_w18_d2_s0":{"start":8.5,"end":13},"9_w18_d3_s0":{"start":8.5,"end":13},"9_w18_d4_s0":{"start":8,"end":13},"1_w18_d1_s0":{"start":8,"end":19.5},"5_w18_d1_s0":{"start":19,"end":23},"4_w18_d1_s0":{"start":19.5,"end":24},"7_w18_d1_s0":{"start":19,"end":23},"7_w18_d2_s0":{"start":19,"end":23},"7_w18_d3_s0":{"start":19,"end":23},"7_w18_d4_s0":{"start":19,"end":23},"7_w18_d5_s0":{"start":19,"end":23},"2_w18_d1_s0":{"start":8.5,"end":16.5},"2_w18_d3_s0":{"start":9,"end":17},"2_w18_d4_s0":{"start":8.5,"end":16.5},"2_w18_d6_s0":{"start":10,"end":18},"13_w18_d2_s0":{"start":9,"end":17},"4_w18_d2_s0":{"start":19.5,"end":24},"4_w18_d3_s0":{"start":19.5,"end":24},"4_w18_d4_s0":{"start":19.5,"end":24},"1_w18_d2_s0":{"start":8,"end":19.5},"1_w18_d3_s0":{"start":8,"end":19.5},"1_w18_d4_s0":{"start":11,"end":19.5},"10_w18_d2_s0":{"start":13,"end":16},"10_w18_d3_s0":{"start":13,"end":16},"10_w18_d2_s1":{"start":19,"end":24},"10_w18_d3_s1":{"start":19,"end":24},"13_w18_d3_s0":{"start":13,"end":21},"5_w18_d4_s0":{"start":19,"end":23},"13_w18_d4_s0":{"start":12,"end":20},"1_w18_d5_s0":{"start":12,"end":24},"13_w18_d5_s0":{"start":15,"end":23},"10_w18_d4_s0":{"start":13,"end":16},"10_w18_d5_s0":{"start":13,"end":16},"10_w18_d4_s1":{"start":19,"end":24},"10_w18_d5_s1":{"start":19,"end":24},"5_w18_d5_s0":{"start":19,"end":23},"1_w18_d6_s0":{"start":9,"end":23},"10_w18_d6_s0":{"start":10,"end":18},"13_w18_d6_s0":{"start":15,"end":23},"5_w18_d6_s0":{"start":19,"end":23},"11_w18_d0_s0":{"start":18,"end":23},"11_w18_d4_s0":{"start":21,"end":24},"11_w18_d6_s0":{"start":20,"end":23},"11_w18_d5_s0":{"start":13,"end":15},"4_w18_d0_s0":{"start":19.5,"end":23},"9_w19_d0_s0":{"start":9,"end":14},"9_w19_d3_s0":{"start":19,"end":25},"10_w19_d3_s0":{"start":15,"end":24},"1_w19_d4_s0":{"start":9,"end":25},"1_w19_d3_s0":{"start":15,"end":25},"4_w19_d5_s0":{"start":15,"end":25},"5_w19_d5_s1":{"start":14,"end":23},"5_w19_d6_s1":{"start":14,"end":18},"13_w19_d3_s0":{"start":15,"end":24},"2_w19_d3_s0":{"start":16,"end":24},"7_w19_d3_s0":{"start":18,"end":25},"4_w19_d3_s0":{"start":18,"end":25},"5_w19_d3_s0":{"start":19.5,"end":23.5},"11_w19_d3_s0":{"start":16,"end":24},"2_w19_d4_s0":{"start":11,"end":23},"13_w19_d4_s0":{"start":9,"end":15},"13_w19_d4_s1":{"start":19,"end":23.5},"10_w19_d5_s0":{"start":20,"end":24},"10_w19_d6_s0":{"start":20,"end":24},"10_w19_d5_s1":{"start":12,"end":17},"10_w19_d6_s1":{"start":12,"end":17},"4_w19_d6_s1":{"start":15,"end":25},"7_w19_d5_s1":{"start":14,"end":23},"11_w19_d4_s0":{"start":21.5,"end":25},"5_w19_d4_s0":{"start":14,"end":23},"4_w19_d4_s0":{"start":15,"end":25},"7_w19_d4_s0":{"start":14,"end":23},"10_w19_d4_s0":{"start":12,"end":17},"10_w19_d4_s1":{"start":20,"end":24},"9_w19_d4_s0":{"start":12,"end":20},"9_w19_d5_s0":{"start":13,"end":21},"1_w19_d5_s0":{"start":9,"end":25},"1_w19_d6_s1":{"start":9,"end":25},"11_w19_d6_s0":{"start":14,"end":23},"13_w19_d5_s0":{"start":9,"end":16},"13_w19_d5_s1":{"start":19,"end":23},"2_w19_d5_s0":{"start":14,"end":23.5},"11_w19_d5_s0":{"start":14,"end":23.5},"13_w19_d6_s0":{"start":9,"end":20},"2_w19_d6_s0":{"start":12,"end":22},"9_w19_d6_s0":{"start":12,"end":18},"7_w19_d6_s0":{"start":12,"end":19},"9_w19_d2_s0":{"start":14,"end":17},"9_w20_d2_s0":{"start":8.5,"end":13},"9_w20_d3_s0":{"start":8.5,"end":13},"9_w20_d4_s0":{"start":8.5,"end":13},"2_w20_d2_s0":{"start":9,"end":17},"2_w20_d4_s0":{"start":9,"end":17},"10_w20_d2_s0":{"start":13,"end":21},"5_w20_d4_s0":{"start":19,"end":23},"5_w20_d5_s0":{"start":19,"end":23},"5_w20_d6_s0":{"start":19,"end":23},"4_w20_d2_s0":{"start":19.5,"end":24},"4_w20_d3_s0":{"start":19.5,"end":24},"4_w20_d4_s0":{"start":19.5,"end":24},"4_w20_d5_s0":{"start":19.5,"end":24},"5_w20_d2_s0":{"start":19,"end":23},"5_w20_d4_s1":{"start":19,"end":23},"7_w20_d2_s0":{"start":19,"end":23},"7_w20_d3_s0":{"start":19,"end":23},"7_w20_d4_s0":{"start":19,"end":23},"13_w20_d2_s0":{"start":9,"end":17},"13_w20_d3_s0":{"start":9,"end":17},"1_w20_d3_s0":{"start":8.5,"end":19.5},"11_w20_d3_s0":{"start":17,"end":19},"10_w20_d3_s0":{"start":13,"end":16},"10_w20_d3_s1":{"start":19,"end":24},"1_w20_d4_s0":{"start":8.5,"end":19.5},"13_w20_d4_s0":{"start":11,"end":19},"10_w20_d4_s0":{"start":13,"end":16},"10_w20_d4_s1":{"start":19,"end":24},"2_w20_d5_s0":{"start":13,"end":21},"1_w20_d5_s0":{"start":12.5,"end":19},"10_w20_d5_s0":{"start":13,"end":16},"10_w20_d5_s1":{"start":19,"end":24},"7_w20_d5_s0":{"start":19,"end":23},"11_w20_d5_s1":{"start":22,"end":24},"1_w20_d6_s0":{"start":9,"end":23},"13_w20_d6_s0":{"start":10,"end":18},"10_w20_d6_s0":{"start":10,"end":18},"2_w20_d6_s0":{"start":14,"end":22},"11_w20_d6_s0":{"start":18,"end":23},"2_w20_d1_s0":{"start":9,"end":13},"9_w20_d1_s0":{"start":9,"end":13},"13_w20_d1_s0":{"start":9,"end":13},"11_w20_d5_s0":{"start":13,"end":16},"1_w21_d0_s0":{"start":8,"end":19.5},"1_w21_d1_s0":{"start":8,"end":19.5},"1_w21_d2_s0":{"start":8,"end":19.5},"1_w21_d3_s0":{"start":8,"end":19.5},"1_w21_d4_s0":{"start":8,"end":19.5},"2_w21_d0_s0":{"start":10,"end":18},"2_w21_d1_s0":{"start":10,"end":18},"9_w21_d0_s0":{"start":9,"end":13},"9_w21_d1_s0":{"start":9,"end":13},"9_w21_d2_s0":{"start":9,"end":13},"9_w21_d3_s0":{"start":9,"end":13},"9_w21_d4_s0":{"start":9,"end":13},"11_w21_d0_s0":{"start":18,"end":23},"5_w21_d0_s0":{"start":19,"end":23},"5_w21_d1_s0":{"start":19,"end":23},"5_w21_d4_s0":{"start":19,"end":23},"5_w21_d5_s0":{"start":19,"end":23},"5_w21_d6_s0":{"start":19,"end":23},"7_w21_d1_s0":{"start":19,"end":23},"7_w21_d2_s0":{"start":19,"end":23},"7_w21_d3_s0":{"start":19,"end":23},"7_w21_d4_s0":{"start":19,"end":23},"7_w21_d5_s0":{"start":19,"end":23},"4_w21_d1_s0":{"start":19.5,"end":24},"4_w21_d3_s0":{"start":19.5,"end":24},"4_w21_d4_s0":{"start":19.5,"end":24},"4_w21_d5_s0":{"start":19.5,"end":24},"4_w21_d6_s0":{"start":19.5,"end":24},"13_w21_d2_s0":{"start":10,"end":18},"13_w21_d3_s0":{"start":10,"end":18},"10_w21_d2_s0":{"start":15.5,"end":23.5},"11_w21_d2_s0":{"start":18,"end":23},"10_w21_d3_s0":{"start":13,"end":16},"10_w21_d4_s0":{"start":13,"end":16},"10_w21_d5_s0":{"start":13,"end":16},"10_w21_d3_s1":{"start":19,"end":24},"10_w21_d4_s1":{"start":19,"end":24},"10_w21_d5_s1":{"start":19,"end":24},"13_w21_d4_s0":{"start":9,"end":17},"2_w21_d4_s0":{"start":11,"end":19},"1_w21_d5_s0":{"start":12,"end":19},"2_w21_d5_s0":{"start":14,"end":22},"13_w21_d5_s0":{"start":13,"end":21},"13_w21_d6_s0":{"start":10,"end":18},"1_w21_d6_s0":{"start":9,"end":19.5},"10_w21_d6_s0":{"start":10,"end":18},"11_w21_d6_s0":{"start":18,"end":23},"2_w21_d6_s0":{"start":11,"end":19},"11_w21_d5_s0":{"start":21,"end":24}},"nextId":18,"dayOrder":{"20_5":[1,2,11,10,5,4,7,9,13],"20_6":[1,10,13,2,5,11,4,7,9],"21_0":[1,9,2,11,5,10,4,7,13],"21_1":[1,2,9,5,7,4,10,11,13],"21_2":[1,9,13,10,11,7,4,5,2],"21_3":[1,9,13,10,4,7,5,11,2],"21_4":[1,2,9,13,10,5,4,7,11],"21_5":[1,10,13,2,5,4,7,11,9],"21_6":[1,13,10,2,11,5,4,7,9]}};
 
-// Datos semilla (se usan solo si el servidor devuelve un estado vacío)
-employees=[
-  {id:1,name:'Ana Martínez',role:'Camarera',contract:'40h'},
-  {id:2,name:'Carlos López',role:'Barista',contract:'40h'},
-  {id:3,name:'María García',role:'Camarera',contract:'30h'},
-  {id:4,name:'Javier Ruiz',role:'Cocinero',contract:'40h'},
-  {id:5,name:'Laura Sanz',role:'Ayudante',contract:'20h'},
-  {id:6,name:'Pedro Moreno',role:'Camarero',contract:'40h'},
-  {id:7,name:'Sofía Castro',role:'Barista',contract:'30h'},
-  {id:8,name:'Rubén Torres',role:'Ayudante',contract:'20h'},
-];
-shifts={};nextId=9;dayOrder={};
+employees=JSON.parse(JSON.stringify(SEED_DATA.employees));
+shifts=JSON.parse(JSON.stringify(SEED_DATA.shifts));
+nextId=SEED_DATA.nextId||18;
+dayOrder=JSON.parse(JSON.stringify(SEED_DATA.dayOrder||{}));
 
 function hToX(h){return(h-START_H)*SLOT_PX;}
 function xToH(x){return x/SLOT_PX+START_H;}
