@@ -427,19 +427,26 @@ async function loadData(){
       const id=localStorage.getItem('scb26_id');
       const dо=localStorage.getItem('scb26_do');
       const saved=localStorage.getItem('scb26_loaded')||localStorage.getItem('scb26_saved');
-      if(e&&JSON.parse(e).length){
-        employees=JSON.parse(e);
+      const localEmps=e?JSON.parse(e):null;
+      if(localEmps&&localEmps.length){
+        employees=localEmps;
         shifts=JSON.parse(s||'{}');
         nextId=parseInt(id)||nextId;
         dayOrder=JSON.parse(dо||'{}');
         setSyncStatus('warn',`Local · último servidor: ${saved||'desconocido'}`);
         console.warn('[SCB] Usando datos locales. Último guardado en servidor:',saved);
       } else {
-        setSyncStatus('warn','Datos de emergencia · servidor no disponible');
-        console.warn('[SCB] Sin backup local, usando SEED_DATA');
+        // No hay backup local — usar SEED_DATA (datos reales incrustados en el HTML)
+        employees=JSON.parse(JSON.stringify(SEED_DATA.employees));
+        shifts=JSON.parse(JSON.stringify(SEED_DATA.shifts));
+        nextId=SEED_DATA.nextId||18;
+        dayOrder=JSON.parse(JSON.stringify(SEED_DATA.dayOrder||{}));
+        setSyncStatus('warn','Datos de emergencia · servidor caído · '+fmtNow());
+        console.warn('[SCB] Sin backup local — cargando SEED_DATA con',employees.length,'empleados y',Object.keys(shifts).length,'turnos');
       }
-    }catch(_){
+    }catch(e2){
       setSyncStatus('err','Error al cargar datos');
+      console.error('[SCB] Error crítico en fallback',e2);
     }
   }
 }
