@@ -367,7 +367,7 @@ function saveData(){
 async function _persist(){
   const payload={employees,shifts,nextId,dayOrder};
   try{
-    const res=await fetch('/api/data',{
+    const res=await fetch('/.netlify/functions/data',{
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify(payload),
@@ -402,7 +402,7 @@ async function loadData(){
     if(th)document.documentElement.setAttribute('data-theme',th);
   }catch(_){}
   try{
-    const res=await fetch('/api/data');
+    const res=await fetch('/.netlify/functions/data');
     if(!res.ok)throw new Error('HTTP '+res.status);
     const data=await res.json();
     if(data.employees&&data.employees.length)employees=data.employees;
